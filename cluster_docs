@@ -1,0 +1,245 @@
+Install kvm
+yum install qemu* virt* libvirt*
+
+Create file system for disk image, this is place where kvm will install and store filesystem of kvm vm 
+
+
+Create a directory for storing iso image
+
+
+Networking for kvm machines. Create bridge network
+    cd /etc/sysconfig/network-scripts
+    vi ifcfg-br0
+        >
+        DEVICE="br0"
+        ONBOOT=yes
+        TYPE=BRIDGE
+        BOOTPROTO=static
+        IPADDR=192.168.209.132
+        NETMASK=255.255.255.0
+
+check for network card with command ifconfig
+    Say I selected interface ens33
+    cd /etc/sysconfig/network-scripts
+    vi ifcfg-ens33
+       Change > BRIDGE="br0"
+              > BOOTPROTO=static
+
+
+Restart network services and check ithernet card for br0 with ifconfig command. you will find IP address is assigned to to br0
+
+
+
+
+Now launch virt-manger with command : virt-manager and create virtual machine
+
+In virt-manager:
+    click on new machine
+    select option - local install media
+    Browse iso image 
+    Check for - automatically detect os
+    allocate memory(1024) and cpu(1)
+    now slect vm storage location that we created earlier in step 2
+        select or create custom
+            manage
+            storage
+            click on + and specify name of vm_disk
+            choose volume       
+        forward
+     Network selection:
+        selct br0 that we created
+        Finish
+=====================================================
+make all nodes are passwordless authetications.
+=====================================================
+
+Install clsuter:
+
+log in to all nodes and run below commands to install cluster, use tmux in sync mode*****************
+
+    selelct fence agent. or you can install all with below command
+        yum installl pcs fence-agents-all
+        
+    Allow service in firewall if enabled
+        firewall-cmd --add-service=high-availability  
+        firewall-cmd --add-service=high-availabliity --permenant
+    Start and enable service
+        systemctl start pcsd
+        systemctl enable pcsd
+    
+    when we install pcsd it will add user "hacluster" . so we need to set password for this
+        echo password | passwd --stdin hacluster
+
+    authentcate all node with hacluster user           
+        pcs cluster auth node1 node2 node3 -u hacluster -p password
+
+    now you need to setup cluster
+        pcs cluster setup --start --name cluster_name node1 node2 node3 --force
+
+    now make nodes to autojoin cluster after reboot
+        pcs cluster enable --all
+
+    now check cluster status with
+        pcs cluster status
+
+    till this we cofigured cluster but we didnt configured stonith. so for that we need to configure stonith
+
+
+Install Fencing:
+
+make sure you  are on host machine****
+
+Install packages
+    yum install fence-virt fence-virtd fence-virtd-multicast fence-virtd-libvirt
+
+create directory to store cluster secrates
+    mkdir /etc/cluster
+
+create secreate
+    dd if=/dev/random of=/etc/cluster/fence_xvm.key bs=512 count=1
+
+
+Start configuring fencing with below command
+    fence_virtd -c
+        take all default except below
+            select proper interface: br0
+
+add port in firewall
+    firewall-cmd --add-port=1229/udp
+    firewall-cmd --add-port=1229/udp --permenant     
+    firewall-cmd --add-port=1229/tcp
+    firewall-cmd --add-port=1229/tcp --permenant     
+
+restart fence service and enable it
+    systemctl restart fence_virtd
+    systemctl enable fence_virtd
+
+Create cluster directory on all kvm nodes and copy fence key to all nodes:****
+    scp /etc/cluster/fence_xvm.key node1:/etc/cluster        
+    scp /etc/cluster/fence_xvm.key node2:/etc/cluster        
+    scp /etc/cluster/fence_xvm.key node3:/etc/cluster        
+
+-----on vms-----
+add port on all nodes
+    firewall-cmd --add-port=1229/udp
+    firewall-cmd --add-port=1229/udp --permenant     
+    firewall-cmd --add-port=1229/tcp
+    firewall-cmd --add-port=1229/tcp --permenant     
+
+
+Now I need to create stonith 
+    for kvm use stonith device is : fence_xvm
+    you can list all stonith agent with below command
+        pcs stonith list    
+    details about stonith agent
+        pcs stonith describe fence_xvm
+    create stonith agent
+        pcs stonith create <stonith_angent_name> fence_xvm port="nodea" pcmk_host_list="nodea"
+    confirm with 
+        pcs stonith show
+--------------------------
+
+from host if you want to check fence agens
+    fence_xvm -o list
+from host if you want to check status of specific fence agent
+    fence_xvm -H node1 -o status
+from host if you want to set status of specific fence agent to off and on
+    fence_xvm -H node1 -o off
+    fence_xvm -H node1 -o on
+
+fence other node from node
+    pcs stonith fence nodec
+
+##################################### Managing cluster nodes ################################################
+start stopping cluster serices 
+enableing disabling cluster nodes
+-------------------------------
+log in to any node in cluster
+check cluster status
+    pcs cluster status
+    pcs status
+stop/start cluster on logged in node
+    pcs cluster stop
+    pcs cluster start
+
+stop/start cluster on all nodes
+    pcs cluster stop --all
+    pcs cluster start --all
+
+stop/start cluster service on other node
+    pcs cluster stop nodeb
+    pcs cluster start nodeb
+
+enable cluster all nodes to join cluster after reboot
+    pcs cluster enable --all
+
+disable a cluster nodes to join cluster after reboot
+    pcs cluster disable node2
+--------------------------------
+Adding and removing cluster nodes.
+--------------------------------
+make sure you have new kvm vm say node4 and install pcs and package for fencing agent refer above docs
+log in to any node in cluster to authticate new node
+    pcs cluster auth -u hacluster -p password node4
+add node
+    pcs cluster add node4
+log in to node4 to authrize 
+    pcs cluster auth -u hacluster -p password
+
+enable and start pcs cluster
+    pcs cluster enable
+    pcs cluster start
+
+check status now , new node will be added there
+    pcs cluster status
+
+remove a node from cluster
+    pcs cluster remove node2
+    pcs stonith delete fence_node2
+-------------------------------
+fence configuration for new node
+-------------------------------
+log in to new node
+create secreat directry and copy secreate
+mkdir /etc/cluster
+
+copy secreat from host
+scp /etc/cluster/fence_xvm.key node4:/etc/cluster/
+
+on node4
+    pcs stonith create node4 fence_xvm port="node4" pcmk_host_list="node4"
+    pcs stonith show
+-------------------------------
+standby and unstandby node
+-------------------------------
+    pcs cluster standby node3
+    pcs cluster unstandby node3
+===================================================
+Quorum Operations
+considered node1,node2,node3 and node4 are in cluster
+
+get quorum info:
+    corosync-quorumtool
+    corosync-quroumtool -m   --> live output
+
+-----------
+Option: --wait_for_all 
+    to start cluster and service, cluster wait for all cluster members to join 
+
+Default behaviour of cluster is if any node in cluser do not joins cluster then cluster fence that node.
+But if we want to make sure service or cluster will be operational only and only all nodes joins cluster.
+So with quorum we can achive, wait for cluster members join for some time
+
+
+    vi /etc/corosync/corosync.conf
+    >> in quorum block add
+        wait_for_all: 1
+
+    pcs cluster stop --all
+    pcs cluster sync
+    pcs cluster start --all
+
+Option: --auto_tie_braker
+    
+===================================================
+
