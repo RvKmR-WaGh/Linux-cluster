@@ -1,3 +1,10 @@
+================================
+Corosync: Framework used by pacemaker to handle communucation in beteen cluster nodes
+Pacemaker: This is responsible for managing cluster services, resources, fencing nodes, and monitoring cluster membership.
+
+================================
+
+
 Install kvm
 yum install qemu* virt* libvirt*
 
@@ -242,4 +249,80 @@ So with quorum we can achive, wait for cluster members join for some time
 Option: --auto_tie_braker
     
 ===================================================
+CLuster resources
+
+    pcs resource list
+    pcs resource describe <resource_name>
+
+Create filesystem resource:
+    pcs resource describe Filesystem
+    pcs resource create mynewFS Filesystem device=name_and_path_of_machine_where_filesystem_exported directory=where_to_mount fstype=nfs option=ro
+
+    pcs resource show
+    pcs resource show mynewFS
+
+Update resource
+    pcs resource update mynewFS device=new_device option=rw
+
+Remove cluster resource
+    pcs resource delete mynewFS
+
+----------------
+Configuring resource group:
+Ex: cluster apache services
+ Required resources:
+    Floating IP address VIP
+    Filesystem
+    apache
+    
+    install httpd on all nodes in cluster
+
+ Creating resource group:
+    first need to create resources        
+        pcs resource create webip IPaddr2 ip=192.168.0.1 nic=eth0:1 cdir_netmask=24 --group mygroup
+        pcs resource create webfs Filesystem device=myworkstation:/exports/www directory=/var/www fstype=nfs option=ro --group mygroup
+        pcs resource create webservice apache --group mygroup
+
+ disable group
+    pcs resource disable mygroup
+
+ move cluster resource
+    pcs resource move mygroup node3
+
+ Restrict group to specific node
+    pcs resource ban mygroup node3
+    check:
+        pcs constraint list
+ Unrestrict group from node
+    pcs resource clear mygroup node3
+
+============================================
+Troubleshooting HA
+
+debug: vi /etc/corosync/corosync.conf
+        > edit log block
+            add: 
+                debug:yes
+        vi /etc/sysconfig/pacemaker
+        > remove comment at debug
+
+Troubleshoot Resource failover:
+-------------
+    pcs resource failcount show <Resource>
+
+ start resource in debug:
+    pcs resource debug-start <resourcename> --full 
+        > here you will ger error log
+          consider it is showing apache conf file is missing
+        check in resource conf what is configured
+    pcs resource show webserv
+        > may need to update conf file in resource
+    pcs resource update webserve configfile=/etc/httpd/conf/httpd.conf
+
+Troubleshooting network issue:
+--------------
+run command on node
+    corosync-quorumtool
+        > this will show quorum status
+
 
